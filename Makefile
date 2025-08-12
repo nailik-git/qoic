@@ -1,2 +1,2 @@
 qoic: qoic.c
-	clang -g -fsanitize=address -o qoic qoic.c
+	clang -g -fsanitize=address -lpng -o qoic qoic.c
