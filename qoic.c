@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <png.h>
 #include <pngconf.h>
 #include <setjmp.h>
@@ -47,8 +48,16 @@ uint8_t hash(struct pixel p) {
 }
 
 void write_raw(struct image img, char* outfile) {
-  fprintf(stderr, "TODO");
-  exit(1);
+  FILE* output = fopen(outfile, "w");
+  if(!output) {
+    fprintf(stderr, "ERROR: Couldn't open file \"%s\"", outfile);
+  }
+
+  for(int i = 0; i < img.height; i++) {
+    fwrite(img.data[i], 1, img.width * img.channels, output);
+  }
+
+  fclose(output);
 }
 
 void write_png(struct image img, char* outfile) {
@@ -57,6 +66,8 @@ void write_png(struct image img, char* outfile) {
 }
 
 void write_qoi(struct image img, char* outfile) {
+  memset(array, 0, sizeof(struct pixel) * 64);
+
   FILE* output = fopen(outfile, "w");
   if(!output) {
     fprintf(stderr, "ERROR: Couldn't open file \"%s\"", outfile);
@@ -235,10 +246,147 @@ struct image read_png(char* infile) {
   return r;
 }
 
+void shift_read(uint8_t* read_buf, int amount, FILE* file) {
+  for(int i = 0; i < (8 - amount); i++) {
+    read_buf[i] = read_buf[i + amount];
+  }
+  fread(&read_buf[8 - amount], 1, amount, file);
+}
+
+void shift_read1(uint8_t* read_buf, FILE* file) {
+  for(int i = 0; i < 7; i++) {
+    read_buf[i] = read_buf[i + 1];
+  }
+  fread(&read_buf[7], 1, 1, file);
+}
+
+int qoi_end(uint8_t* read_buf) {
+  for(int i = 0; i < 7; i++) {
+    if(read_buf[i]) return 0;
+  }
+  if(read_buf[7] != 1) return 0;
+
+  return 1;
+}
+
 struct image read_qoi(char* infile) {
-  fprintf(stderr, "TODO");
-  exit(1);
-  return (struct image) {0};
+  memset(array, 0, sizeof(struct pixel) * 64);
+
+  FILE* file = fopen(infile, "r");
+  if(!file) {
+    fprintf(stderr, "ERROR: Couldn't open file \"%s\"", infile);
+  }
+
+  struct image img = {0};
+
+
+  char magic_number[5];
+  fread(magic_number, 1, 4, file);
+  if(strcmp("qoif", magic_number) != 0) {
+    fclose(file);
+    return img;
+  }
+
+  uint8_t width_parts[4];
+  fread(width_parts, 1, 4, file);
+  for(int i = 0; i < 4; i++) {
+    img.width += width_parts[i] << (8 * (3 - i));
+  }
+
+  uint8_t height_parts[4];
+  fread(height_parts, 1, 4, file);
+  for(int i = 0; i < 4; i++) {
+    img.height += height_parts[i] << (8 * (3 - i));
+  }
+
+  fread(&img.channels, 1, 1, file);
+  fread(&img.colorspace, 1, 1, file);
+
+  img.data = malloc(sizeof(uint8_t*) * img.height);
+  for(int i = 0; i < img.height; i++) {
+    img.data[i] = malloc(img.width * img.channels);
+  }
+
+  uint8_t read_buf[8] = {0};
+  fread(read_buf, 1, 8, file);
+
+  struct pixel pp = {.a = 255};
+  struct pixel cp;
+
+  uint8_t ph;
+  int8_t dr, dg, db, dr_dg, db_dg;
+  for(int i = 0; i < img.height; i++) {
+    for(int j = 0; j < img.width * img.channels; j++) {
+      if(qoi_end(read_buf)) goto end;
+      if(read_buf[0] == (uint8_t) -1) { // qoi_rgba
+        img.data[i][j] = (cp.r = read_buf[1]);
+        img.data[i][j + 1] = (cp.g = read_buf[2]);
+        img.data[i][j + 2] = (cp.b = read_buf[3]);
+        img.data[i][j + 3] = (cp.a = read_buf[4]);
+        shift_read(read_buf, 4, file);
+        j += 3;
+      } else if(read_buf[0] == (uint8_t) -2) { // qoi_rgb
+        img.data[i][j] = (cp.r = read_buf[1]);
+        img.data[i][j + 1] = (cp.g = read_buf[2]);
+        img.data[i][j + 2] = (cp.b = read_buf[3]);
+        if(img.channels == 4) img.data[i][j + 3] = cp.a;
+        shift_read(read_buf, 3, file);
+        j += img.channels - 1;
+      } else if((read_buf[0] >> 6) == 0b00) { // qoi_index
+        cp = array[read_buf[0]];
+
+        img.data[i][j] = cp.r;
+        img.data[i][j + 1] = cp.g;
+        img.data[i][j + 2] = cp.b;
+        if(img.channels == 4) img.data[i][j + 3] = cp.a;
+
+        j += img.channels - 1;
+      } else if((read_buf[0] >> 6) == 0b01) { // qoi_diff
+        dr = ((read_buf[0] >> 4) & 0b11) - 2;
+        dg = ((read_buf[0] >> 2) & 0b11) - 2;
+        db = (read_buf[0] & 0b11) - 2;
+        img.data[i][j] = (cp.r += dr);
+        img.data[i][j + 1] = (cp.g += dg);
+        img.data[i][j + 2] = (cp.b += db);
+        if(img.channels == 4) img.data[i][j + 3] = cp.a;
+        j += img.channels - 1;
+      } else if((read_buf[0] >> 6) == 0b10) { // qoi_diff_luma
+        dg = (read_buf[0] & 0b111111) - 32;
+        shift_read1(read_buf, file);
+        db_dg = (read_buf[0] & 0b1111) - 8;
+        dr_dg = (read_buf[0] >> 4) - 8;
+        dr = dr_dg + dg;
+        db = db_dg + dg;
+        img.data[i][j] = (cp.r += dr);
+        img.data[i][j + 1] = (cp.g += dg);
+        img.data[i][j + 2] = (cp.b += db);
+        if(img.channels == 4) img.data[i][j + 3] = cp.a;
+        j += img.channels - 1;
+      } else if((read_buf[0] >> 6) == 0b11) { // qoi_run
+        uint8_t run = (read_buf[0] & 0b111111) + 1;
+        for(int k = 0; k < run; k++) {
+          if(j + k * img.channels == img.width * img.channels) {
+            if(++i == img.height) break;
+            j = 0;
+            run -= k;
+            k = 0;
+          }
+          img.data[i][j + k * img.channels] = cp.r;
+          img.data[i][j + k * img.channels + 1] = cp.g;
+          img.data[i][j + k * img.channels + 2] = cp.b;
+          if(img.channels == 4) img.data[i][j + (k * 4) + 3] = cp.a;
+        }
+        j += run * img.channels - 1;
+      }
+      array[hash(cp)] = cp;
+      pp = cp;
+      shift_read1(read_buf, file);
+    }
+  }
+  end:
+  fclose(file);
+
+  return img;
 }
 
 void usage() {
