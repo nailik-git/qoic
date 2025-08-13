@@ -50,7 +50,7 @@ uint8_t hash(struct pixel p) {
 void write_raw(struct image img, char* outfile) {
   FILE* output = fopen(outfile, "w");
   if(!output) {
-    fprintf(stderr, "ERROR: Couldn't open file \"%s\"", outfile);
+    fprintf(stderr, "ERROR: Couldn't open file \"%s\"\n", outfile);
   }
 
   for(int i = 0; i < img.height; i++) {
@@ -63,18 +63,19 @@ void write_raw(struct image img, char* outfile) {
 void write_png(struct image img, char* outfile) {
   FILE* output = fopen(outfile, "w");
   if(!output) {
-    fprintf(stderr, "ERROR: Couldn't open file \"%s\"", outfile);
+    fprintf(stderr, "ERROR: Couldn't open file \"%s\"\n", outfile);
   }
 
   png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-
-  if(png_ptr == NULL) {
+  if(!png_ptr) {
+    fprintf(stderr, "ERROR: Couldn't create png_ptr\n");
     fclose(output);
     return;
   }
 
   png_infop info_ptr = png_create_info_struct(png_ptr);
   if(!info_ptr) {
+    fprintf(stderr, "ERROR: Couldn't create info_ptr\n");
     fclose(output);
     png_destroy_write_struct(&png_ptr,  NULL);
     return;
@@ -107,7 +108,7 @@ void write_qoi(struct image img, char* outfile) {
 
   FILE* output = fopen(outfile, "w");
   if(!output) {
-    fprintf(stderr, "ERROR: Couldn't open file \"%s\"", outfile);
+    fprintf(stderr, "ERROR: Couldn't open file \"%s\"\n", outfile);
   }
 
   uint8_t width_parts[4];
@@ -184,9 +185,14 @@ void write_qoi(struct image img, char* outfile) {
 }
 
 struct image read_raw(char* infile, uint32_t width, uint32_t height, uint8_t channels) {
-  FILE* file = fopen(infile, "r");
-
   struct image r = {0};
+
+  FILE* file = fopen(infile, "r");
+  if(!file) {
+    fprintf(stderr, "ERROR: No such file \"%s\"\n", infile);
+    return r;
+  }
+
   r.data = malloc(sizeof(uint8_t*) * height);
   for(int i = 0; i < height; i++) {
     r.data[i] = malloc(width * channels);
@@ -202,12 +208,12 @@ struct image read_png(char* infile) {
 
   FILE* file = fopen(infile, "rb");
   if(!file) {
-    fprintf(stderr, "ERROR: No such file: \"%s\"", infile);
+    fprintf(stderr, "ERROR: No such file: \"%s\"\n", infile);
     return (struct image) {0};
   }
 
   if(fread(header, 1, number, file) != number) {
-    fprintf(stderr, "ERROR: Couldn't read from file \"%s\"", infile);
+    fprintf(stderr, "ERROR: Couldn't read from file \"%s\"\n", infile);
     free(header);
     fclose(file);
     return (struct image) {0};
@@ -215,7 +221,7 @@ struct image read_png(char* infile) {
 
   int is_png = !png_sig_cmp(header, 0, number);
   if(!is_png) {
-    fprintf(stderr, "ERROR: File \"%s\" is not a png image", infile);
+    fprintf(stderr, "ERROR: File \"%s\" is not a png image\n", infile);
     free(header);
     fclose(file);
     return (struct image) {0};
@@ -226,7 +232,7 @@ struct image read_png(char* infile) {
   png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 
   if(!png_ptr) {
-    fprintf(stderr, "ERROR: Couldn't create png_ptr");
+    fprintf(stderr, "ERROR: Couldn't create png_ptr\n");
     fclose(file);
     return (struct image) {0};
   }
@@ -234,14 +240,14 @@ struct image read_png(char* infile) {
   png_infop info_ptr = png_create_info_struct(png_ptr);
 
   if(!info_ptr) {
-    fprintf(stderr, "ERROR: Couldn't create info_ptr");
+    fprintf(stderr, "ERROR: Couldn't create info_ptr\n");
     png_destroy_read_struct(&png_ptr, NULL, NULL);
     fclose(file);
     return (struct image) {0};
   }
 
   if(setjmp(png_jmpbuf(png_ptr))) {
-    fprintf(stderr, "ERROR: An error occurred");
+    fprintf(stderr, "ERROR: An error occurred\n");
     png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
     fclose(file);
     return (struct image) {0};
@@ -257,7 +263,7 @@ struct image read_png(char* infile) {
 
   uint8_t b = png_get_bit_depth(png_ptr, info_ptr);
   if(b != 8) {
-    fprintf(stderr, "ERROR: File \"%s\" is has unsupported color-depth (got %d, expected 8)",
+    fprintf(stderr, "ERROR: File \"%s\" is has unsupported color-depth (got %d, expected 8)\n",
         infile, b
     );
     png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
@@ -309,13 +315,13 @@ int qoi_end(uint8_t* read_buf) {
 struct image read_qoi(char* infile) {
   memset(array, 0, sizeof(struct pixel) * 64);
 
-  FILE* file = fopen(infile, "r");
-  if(!file) {
-    fprintf(stderr, "ERROR: Couldn't open file \"%s\"", infile);
-  }
-
   struct image img = {0};
 
+  FILE* file = fopen(infile, "r");
+  if(!file) {
+    fprintf(stderr, "ERROR: No such file \"%s\"\n", infile);
+    return img;
+  }
 
   char magic_number[5];
   fread(magic_number, 1, 4, file);
@@ -492,6 +498,8 @@ int main(int argc, char** argv) {
   } else {
     goto fail;
   }
+
+  if(!img.data) return 1;
 
   img.width = ws ? width : img.width;
   img.height = hs ? height : img.height;
