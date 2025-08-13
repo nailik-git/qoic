@@ -61,8 +61,45 @@ void write_raw(struct image img, char* outfile) {
 }
 
 void write_png(struct image img, char* outfile) {
-  fprintf(stderr, "TODO");
-  exit(1);
+  FILE* output = fopen(outfile, "w");
+  if(!output) {
+    fprintf(stderr, "ERROR: Couldn't open file \"%s\"", outfile);
+  }
+
+  png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+
+  if(png_ptr == NULL) {
+    fclose(output);
+    return;
+  }
+
+  png_infop info_ptr = png_create_info_struct(png_ptr);
+  if(!info_ptr) {
+    fclose(output);
+    png_destroy_write_struct(&png_ptr,  NULL);
+    return;
+  }
+
+  if(setjmp(png_jmpbuf(png_ptr))) {
+    fprintf(stderr, "ERROR: An error occurred\n");
+    fclose(output);
+    png_destroy_write_struct(&png_ptr, &info_ptr);
+    return;
+  }
+  png_init_io(png_ptr, output);
+
+  png_set_rows(png_ptr, info_ptr, (unsigned char**) img.data);
+
+  png_set_IHDR(png_ptr, info_ptr, img.width, img.height, 8,
+               img.channels == 3 ? PNG_COLOR_TYPE_RGB : PNG_COLOR_TYPE_RGBA,
+               PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE
+  );
+
+  png_write_info(png_ptr, info_ptr);
+
+  png_write_png(png_ptr, info_ptr, 0, NULL);
+
+  png_destroy_write_struct(&png_ptr, &info_ptr);
 }
 
 void write_qoi(struct image img, char* outfile) {
