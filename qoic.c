@@ -347,7 +347,7 @@ struct image read_qoi(char* infile) {
 
   img.data = malloc(sizeof(uint8_t*) * img.height);
   for(int i = 0; i < img.height; i++) {
-    img.data[i] = malloc(img.width * img.channels);
+    img.data[i] = malloc(img.width * img.channels + 1);
   }
 
   uint8_t read_buf[8] = {0};
